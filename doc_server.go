@@ -15,11 +15,26 @@ import (
 )
 
 const (
-	projectID   = "ai-projects-89ddf"
-	location    = "us" // Or your region
-	processorID = "your-processor-id"
-	credFile    = "service_account.json"
+	projectID   = "your-project-id"   // Replace with your GCP project ID
+	location    = "us"                // Or your region
+	processorID = "your-processor-id" // Replace with your Document AI processor ID
+	credFile    = ""                  // Path to your service account key file
 )
+
+// Create a structured Go struct to hold the business license data
+type BusinessLicense struct {
+	LicenseID     string `json:"license_id"`
+	IssuingOffice string `json:"issuing_office"`
+	LicenseeName  string `json:"license_issued_to"`
+	BusinessType  string `json:"for_the_business_of"`
+	Region        string `json:"region"`
+	Ward          string `json:"ward"`
+	Street        string `json:"street"`
+	BranchType    string `json:"principal_or_branch"`
+	AmountPaid    string `json:"amount_of_fee_paid"`
+	IssueDate     string `json:"date_of_issue"`
+	ExpiryDate    string `json:"expiring_date"`
+}
 
 func main() {
 	r := gin.Default()
@@ -55,13 +70,25 @@ func main() {
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{"extracted": output})
+		c.JSON(http.StatusOK, gin.H{"data": output})
 	})
 
 	r.Run(":8080")
+
 }
 
-func processDocument(filePath string) (map[string]string, error) {
+func tryClientConnection(path string) error {
+	ctx := context.Background()
+	_, err := documentai.NewDocumentProcessorClient(ctx, option.WithCredentialsFile(path))
+	if err != nil {
+		return fmt.Errorf("❌ Failed to create Document AI client: %v", err)
+	}
+	fmt.Println("✅ Successfully created Document AI client!")
+	return nil
+}
+
+func processDocument(filePath string) (*BusinessLicense, error) {
+
 	ctx := context.Background()
 	client, err := documentai.NewDocumentProcessorClient(ctx, option.WithCredentialsFile(credFile))
 	if err != nil {
@@ -73,7 +100,6 @@ func processDocument(filePath string) (map[string]string, error) {
 	fileBytes, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		log.Println("Process Doc: ----2---->", err.Error())
-
 		return nil, err
 	}
 
@@ -87,16 +113,65 @@ func processDocument(filePath string) (map[string]string, error) {
 		},
 	}
 
+	// Process the document.
 	resp, err := client.ProcessDocument(ctx, req)
 	if err != nil {
-		log.Println("Process Doc: ----3---->", err.Error())
+		log.Printf("Process Doc Error: %v", err)
 		return nil, err
 	}
 
-	output := map[string]string{}
-	for _, entity := range resp.Document.Entities {
-		output[entity.Type] = entity.MentionText
-	}
+	// In your main handler after `ProcessDocument`:
+	license := extractBusinessLicense(resp.Document)
 
-	return output, nil
+	fmt.Println(license)
+
+	return &license, nil
+}
+
+// Parse the entities and map them to struct fields
+func extractBusinessLicense(doc *documentaipb.Document) BusinessLicense {
+	var license BusinessLicense
+	for _, entity := range doc.Entities {
+		for _, prop := range entity.Properties {
+			key := prop.Type
+			value := prop.MentionText
+			conf := prop.Confidence
+
+			if conf < 0.5 || value == "" {
+				continue // skip low confidence or empty values
+			}
+
+			switch key {
+			case "id":
+				license.LicenseID = value
+			case "organization":
+				if license.IssuingOffice == "" {
+					license.IssuingOffice = value
+				} else {
+					license.BusinessType = value
+				}
+			case "person":
+				if license.LicenseeName == "" {
+					license.LicenseeName = value
+				} else if license.Region == "" {
+					license.Region = value
+				} else if license.Ward == "" {
+					license.Ward = value
+				} else if license.Street == "" {
+					license.Street = value
+				}
+			case "price":
+				license.AmountPaid = value
+			case "date_time":
+				if license.IssueDate == "" {
+					license.IssueDate = value
+				} else {
+					license.ExpiryDate = value
+				}
+			case "branch_type":
+				license.BranchType = value
+			}
+		}
+	}
+	return license
 }
