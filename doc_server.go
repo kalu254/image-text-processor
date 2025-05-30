@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	projectID   = ""
-	location    = "us" // Or your region
-	processorID = ""
-	credFile    = "service_account.json" // Path to your service account key file
+	projectID   = "your-project-id"   // Replace with your GCP project ID
+	location    = "us"                // Or your region
+	processorID = "your-processor-id" // Replace with your Document AI processor ID
+	credFile    = ""                  // Path to your service account key file
 )
 
 // Create a structured Go struct to hold the business license data
